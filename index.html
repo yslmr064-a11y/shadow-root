@@ -1895,6 +1895,22 @@ if (typeof window.supabase !== 'undefined' && SUPABASE_URL !== 'REPLACE_WITH_SUP
     console.warn('Supabase not configured - running in localStorage-only mode');
 }
 
+// Adaptive UI handlers: choose Supabase-backed or local implementations based on availability
+function loginClickHandler() {
+    if (supabase) return handleLoginWithSupabase();
+    return handleLogin();
+}
+
+function registerClickHandler() {
+    if (supabase) return handleRegisterWithSupabase();
+    return handleRegister();
+}
+
+function sendMessageClickHandler() {
+    if (supabase) return sendMessageWithSupabase();
+    return sendMessage();
+}
+
 // دالة للتحقق من اتصال Supabase
 async function checkSupabaseConnection() {
     if (!supabase) {
@@ -2203,25 +2219,25 @@ function setupEventListeners() {
         });
     });
     
-    // تسجيل الدخول - استخدام Supabase
-    document.getElementById('loginBtn').addEventListener('click', handleLoginWithSupabase);
+    // تسجيل الدخول - adaptive handler (Supabase or local)
+    document.getElementById('loginBtn').addEventListener('click', loginClickHandler);
     document.getElementById('loginPassword').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') handleLoginWithSupabase();
+        if (e.key === 'Enter') loginClickHandler();
     });
     
-    // إنشاء حساب - استخدام Supabase
-    document.getElementById('registerBtn').addEventListener('click', handleRegisterWithSupabase);
+    // إنشاء حساب - adaptive handler
+    document.getElementById('registerBtn').addEventListener('click', registerClickHandler);
     document.getElementById('registerConfirmPassword').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') handleRegisterWithSupabase();
+        if (e.key === 'Enter') registerClickHandler();
     });
     
     // تسجيل الخروج
     document.getElementById('logoutBtn').addEventListener('click', handleLogout);
     
-    // إرسال رسالة - استخدام Supabase
-    document.getElementById('sendMessageBtn').addEventListener('click', sendMessageWithSupabase);
+    // إرسال رسالة - adaptive handler
+    document.getElementById('sendMessageBtn').addEventListener('click', sendMessageClickHandler);
     document.getElementById('messageInput').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') sendMessageWithSupabase();
+        if (e.key === 'Enter') sendMessageClickHandler();
     });
     
     // باقي الأحداث تبقى كما هي...
@@ -3031,25 +3047,25 @@ function loadMembers() {
                 });
             });
             
-            // تسجيل الدخول
-            document.getElementById('loginBtn').addEventListener('click', handleLogin);
+            // تسجيل الدخول (adaptive handler)
+            document.getElementById('loginBtn').addEventListener('click', loginClickHandler);
             document.getElementById('loginPassword').addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') handleLogin();
+                if (e.key === 'Enter') loginClickHandler();
             });
             
-            // إنشاء حساب
-            document.getElementById('registerBtn').addEventListener('click', handleRegister);
+            // إنشاء حساب (adaptive handler)
+            document.getElementById('registerBtn').addEventListener('click', registerClickHandler);
             document.getElementById('registerConfirmPassword').addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') handleRegister();
+                if (e.key === 'Enter') registerClickHandler();
             });
             
             // تسجيل الخروج
             document.getElementById('logoutBtn').addEventListener('click', handleLogout);
             
-            // إرسال رسالة
-            document.getElementById('sendMessageBtn').addEventListener('click', sendMessage);
+            // إرسال رسالة (adaptive handler)
+            document.getElementById('sendMessageBtn').addEventListener('click', sendMessageClickHandler);
             document.getElementById('messageInput').addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') sendMessage();
+                if (e.key === 'Enter') sendMessageClickHandler();
             });
             
             // إرسال رسالة في الدردشة المظلمة
