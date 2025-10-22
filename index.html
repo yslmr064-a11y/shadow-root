@@ -1875,7 +1875,789 @@
     </div>
 
     <script>
-        // بيانات التطبيق الموسعة
+// تكوين Supabase - ضع هذا في بداية السكربت
+const SUPABASE_URL = 'https://chrgmariswjgavidqjjt.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNocmdtYXJpc3dqZ2F2aWRxamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjExMjcwOTksImV4cCI6MjA3NjcwMzA5OX0.d8Z2jpfhkBLZeluZPBYItczDEDROA1oD36H1D2eWzU4';
+
+// إنشاء عميل Supabase
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// دالة للتحقق من اتصال Supabase
+async function checkSupabaseConnection() {
+    try {
+        const { data, error } = await supabase.from('users').select('count').limit(1);
+        if (error) throw error;
+        console.log('✅ اتصال Supabase نشط');
+        return true;
+    } catch (error) {
+        console.error('❌ خطأ في اتصال Supabase:', error);
+        return false;
+    }
+}
+
+// دالة لمزامنة البيانات مع Supabase
+async function syncDataToSupabase() {
+    if (!currentUser) return;
+    
+    try {
+        // مزامنة المستخدمين
+        const { error: usersError } = await supabase
+            .from('users')
+            .upsert(users.filter(user => !user.removed));
+        
+        if (usersError) throw usersError;
+
+        // مزامنة الرسائل
+        const { error: messagesError } = await supabase
+            .from('messages')
+            .upsert(messages);
+        
+        if (messagesError) throw messagesError;
+
+        console.log('✅ تم مزامنة البيانات مع Supabase');
+    } catch (error) {
+        console.error('❌ خطأ في مزامنة البيانات:', error);
+    }
+}
+
+// دالة لتحميل البيانات من Supabase
+async function loadDataFromSupabase() {
+    try {
+        // تحميل المستخدمين
+        const { data: usersData, error: usersError } = await supabase
+            .from('users')
+            .select('*');
+        
+        if (usersError) throw usersError;
+        if (usersData) users = usersData;
+
+        // تحميل الرسائل
+        const { data: messagesData, error: messagesError } = await supabase
+            .from('messages')
+            .select('*')
+            .order('timestamp', { ascending: true });
+        
+        if (messagesError) throw messagesError;
+        if (messagesData) messages = messagesData;
+
+        console.log('✅ تم تحميل البيانات من Supabase');
+        
+        // تحديث الواجهة
+        if (currentUser) {
+            loadMessages();
+            loadMembers();
+        }
+    } catch (error) {
+        console.error('❌ خطأ في تحميل البيانات:', error);
+    }
+}
+
+// دالة لتسجيل الدخول مع Supabase
+async function handleLoginWithSupabase() {
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value.trim();
+    
+    if (!username || !password) {
+        alert('يرجى ملء جميع الحقول');
+        return;
+    }
+    
+    try {
+        // البحث عن المستخدم في Supabase
+        const { data: userData, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('username', username)
+            .eq('password', password)
+            .eq('removed', false)
+            .single();
+        
+        if (error) {
+            // إذا لم يوجد المستخدم في Supabase، جرب المحلي
+            console.log('🔍 البحث في البيانات المحلية...');
+            handleLoginLocal();
+            return;
+        }
+
+        if (!userData) {
+            alert('اسم المستخدم أو كلمة المرور غير صحيحة');
+            return;
+        }
+
+        // التحقق من الحظر
+        if (userData.banned && new Date(userData.banUntil) > new Date()) {
+            const remainingTime = Math.ceil((new Date(userData.banUntil) - new Date()) / (1000 * 60 * 60 * 24));
+            alert(`أنت محظور! متبقي ${remainingTime} أيام`);
+            return;
+        }
+        
+        // تحديث حالة المستخدم
+        const { error: updateError } = await supabase
+            .from('users')
+            .update({ 
+                status: 'online',
+                banned: false,
+                banUntil: null 
+            })
+            .eq('id', userData.id);
+        
+        if (updateError) console.error('خطأ في تحديث الحالة:', updateError);
+
+        currentUser = userData;
+        localStorage.setItem('shadowRootCurrentUser', JSON.stringify(currentUser));
+        
+        // تحميل أحدث البيانات
+        await loadDataFromSupabase();
+        
+        // تسجيل الدخول في الأرشيف
+        addToArchive('user_login', `تسجيل دخول المستخدم ${username}`);
+        
+        showMainApp();
+        
+    } catch (error) {
+        console.error('❌ خطأ في تسجيل الدخول:', error);
+        // استخدام النظام المحلي كنسخة احتياطية
+        handleLoginLocal();
+    }
+}
+
+// دالة لتسجيل مستخدم جديد في Supabase
+async function handleRegisterWithSupabase() {
+    const username = document.getElementById('registerUsername').value.trim();
+    const password = document.getElementById('registerPassword').value.trim();
+    const confirmPassword = document.getElementById('registerConfirmPassword').value.trim();
+    
+    if (!username || !password || !confirmPassword) {
+        alert('يرجى ملء جميع الحقول');
+        return;
+    }
+    
+    if (password !== confirmPassword) {
+        alert('كلمات المرور غير متطابقة');
+        return;
+    }
+    
+    if (reservedUsernames.includes(username)) {
+        alert('اسم المستخدم محجوز، يرجى اختيار اسم آخر');
+        return;
+    }
+    
+    try {
+        // التحقق من وجود المستخدم في Supabase
+        const { data: existingUser } = await supabase
+            .from('users')
+            .select('id')
+            .eq('username', username)
+            .eq('removed', false)
+            .single();
+        
+        if (existingUser) {
+            alert('اسم المستخدم موجود مسبقاً');
+            return;
+        }
+        
+        const newUser = {
+            id: generateUserId(),
+            username: username,
+            password: password,
+            rank: "d",
+            status: "online",
+            banned: false,
+            banUntil: null,
+            removed: false,
+            joinDate: new Date().toISOString()
+        };
+        
+        // إضافة المستخدم إلى Supabase
+        const { error: insertError } = await supabase
+            .from('users')
+            .insert([newUser]);
+        
+        if (insertError) throw insertError;
+        
+        // إضافة إلى البيانات المحلية
+        users.push(newUser);
+        
+        // إضافة نقاط بداية
+        userPoints[newUser.id] = 0;
+        saveUserPoints();
+        
+        // تسجيل إنشاء الحساب في الأرشيف
+        addToArchive('user_register', `إنشاء حساب جديد للمستخدم ${username}`);
+        
+        alert('تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول');
+        
+        // التبديل إلى تبويب تسجيل الدخول
+        document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.login-content').forEach(c => c.classList.remove('active'));
+        document.querySelector('.login-tab[data-tab="login"]').classList.add('active');
+        document.getElementById('loginContent').classList.add('active');
+        
+        // تفريغ الحقول
+        document.getElementById('registerUsername').value = '';
+        document.getElementById('registerPassword').value = '';
+        document.getElementById('registerConfirmPassword').value = '';
+        
+    } catch (error) {
+        console.error('❌ خطأ في إنشاء الحساب:', error);
+        // استخدام النظام المحلي كنسخة احتياطية
+        handleRegisterLocal();
+    }
+}
+
+// دالة محسنة لإرسال الرسائل مع Supabase
+async function sendMessageWithSupabase() {
+    if (!checkBanStatus()) return;
+    
+    const messageInput = document.getElementById('messageInput');
+    const messageText = messageInput.value.trim();
+    
+    if (!messageText) return;
+    
+    const message = {
+        id: Date.now(),
+        userId: currentUser.id,
+        userName: currentUser.username,
+        userRank: currentUser.rank,
+        userPoints: userPoints[currentUser.id] || 0,
+        text: messageText,
+        timestamp: new Date().toISOString(),
+        banned: false
+    };
+    
+    try {
+        // إرسال الرسالة إلى Supabase
+        const { error } = await supabase
+            .from('messages')
+            .insert([message]);
+        
+        if (error) throw error;
+        
+        // إضافة إلى البيانات المحلية
+        messages.push(message);
+        
+        // إضافة نقاط للمشاركة
+        addUserPoints(currentUser.id, 1);
+        
+        loadMessages();
+        
+        messageInput.value = '';
+        
+        // تسجيل الرسالة في الأرشيف
+        addToArchive('chat_message', `رسالة من ${currentUser.username}: ${messageText.substring(0, 50)}...`);
+        
+    } catch (error) {
+        console.error('❌ خطأ في إرسال الرسالة:', error);
+        // استخدام النظام المحلي كنسخة احتياطية
+        messages.push(message);
+        saveMessages();
+        loadMessages();
+        messageInput.value = '';
+    }
+}
+
+// استبدال الدوال القديمة بالجديدة في الإعداد
+function setupEventListeners() {
+    // تبديل بين تسجيل الدخول وإنشاء حساب
+    document.querySelectorAll('.login-tab').forEach(tab => {
+        tab.addEventListener('click', function() {
+            document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.login-content').forEach(c => c.classList.remove('active'));
+            
+            this.classList.add('active');
+            document.getElementById(this.dataset.tab + 'Content').classList.add('active');
+        });
+    });
+    
+    // تسجيل الدخول - استخدام Supabase
+    document.getElementById('loginBtn').addEventListener('click', handleLoginWithSupabase);
+    document.getElementById('loginPassword').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') handleLoginWithSupabase();
+    });
+    
+    // إنشاء حساب - استخدام Supabase
+    document.getElementById('registerBtn').addEventListener('click', handleRegisterWithSupabase);
+    document.getElementById('registerConfirmPassword').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') handleRegisterWithSupabase();
+    });
+    
+    // تسجيل الخروج
+    document.getElementById('logoutBtn').addEventListener('click', handleLogout);
+    
+    // إرسال رسالة - استخدام Supabase
+    document.getElementById('sendMessageBtn').addEventListener('click', sendMessageWithSupabase);
+    document.getElementById('messageInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') sendMessageWithSupabase();
+    });
+    
+    // باقي الأحداث تبقى كما هي...
+    document.getElementById('sendDarkMessageBtn').addEventListener('click', sendDarkMessage);
+    document.getElementById('darkMessageInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') sendDarkMessage();
+    });
+
+    document.getElementById('sendPrivateMessageBtn').addEventListener('click', sendPrivateMessage);
+    document.getElementById('privateMessageInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') sendPrivateMessage();
+    });
+    
+    document.getElementById('broadcastBtn').addEventListener('click', sendSystemBroadcast);
+    
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', function() {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            this.classList.add('active');
+            const tabContentId = this.dataset.tab + 'Tab';
+            if (this.dataset.tab === 'archive' && !hasPermission('view_archive')) {
+                alert('ليس لديك صلاحية لرؤية الأرشيف');
+                return;
+            }
+            const contentEl = document.getElementById(tabContentId);
+            if (contentEl) contentEl.classList.add('active');
+            
+            if (this.dataset.tab === 'private') {
+                loadPrivateUsers();
+            } else if (this.dataset.tab === 'verification') {
+                loadUserProjects();
+                loadVerifiedProjects();
+            } else if (this.dataset.tab === 'points') {
+                loadPointsData();
+            } else if (this.dataset.tab === 'archive') {
+                loadArchive();
+            }
+        });
+    });
+    
+    document.getElementById('createRoomBtn').addEventListener('click', createDarkRoom);
+    document.getElementById('joinRoomBtn').addEventListener('click', joinDarkRoom);
+    document.getElementById('leaveRoomBtn').addEventListener('click', leaveDarkRoom);
+    
+    document.getElementById('updateMemberBtn').addEventListener('click', updateMember);
+    document.getElementById('kickUserBtn').addEventListener('click', kickUser);
+    document.getElementById('banUserBtn').addEventListener('click', banUser);
+    document.getElementById('removeUserBtn').addEventListener('click', removeUser);
+    document.getElementById('deleteAllUsersBtn').addEventListener('click', deleteAllUsers);
+    
+    document.getElementById('secretBtn').addEventListener('click', toggleSecretFeatures);
+    
+    document.getElementById('clearAllBtn').addEventListener('click', clearAllMessages);
+    document.getElementById('exportDataBtn').addEventListener('click', exportData);
+    document.getElementById('systemInfoBtn').addEventListener('click', showSystemInfo);
+    document.getElementById('viewAllChatsBtn').addEventListener('click', viewAllDarkChats);
+    
+    document.getElementById('submitProjectBtn').addEventListener('click', submitProject);
+    document.getElementById('addPointsBtn').addEventListener('click', addPoints);
+    document.getElementById('removePointsBtn').addEventListener('click', removePoints);
+    document.getElementById('resetPointsBtn').addEventListener('click', resetPoints);
+
+    const exportBtn = document.getElementById('exportBackupBtn');
+    if (exportBtn) exportBtn.addEventListener('click', exportDataBackup);
+    const importBtn = document.getElementById('importBackupBtn');
+    const importInput = document.getElementById('importBackupInput');
+    if (importBtn && importInput) {
+        importBtn.addEventListener('click', function() {
+            importInput.click();
+        });
+        importInput.addEventListener('change', function(e) {
+            const f = e.target.files[0];
+            if (f) importDataBackup(f);
+        });
+    }
+}
+
+// تحديث التهيئة لاستخدام Supabase
+document.addEventListener('DOMContentLoaded', async function() {
+    // التحقق من اتصال Supabase
+    const isConnected = await checkSupabaseConnection();
+    
+    if (isConnected) {
+        console.log('🚀 استخدام Supabase كقاعدة بيانات');
+        // تحميل البيانات من Supabase إذا كان هناك مستخدم مسجل
+        const savedUser = localStorage.getItem('shadowRootCurrentUser');
+        if (savedUser) {
+            currentUser = JSON.parse(savedUser);
+            await loadDataFromSupabase();
+            checkBanStatus();
+            awardDailyLoginPoints();
+            showMainApp();
+        }
+    } else {
+        console.log('📱 استخدام التخزين المحلي كنسخة احتياطية');
+        // استخدام النظام المحلي
+        if (users.length === 0) {
+            const systemUser = {
+                id: "system_00",
+                username: "00",
+                password: "sys123sys",
+                rank: "system",
+                status: "online",
+                banned: false,
+                banUntil: null,
+                removed: false,
+                joinDate: new Date().toISOString()
+            };
+            users.push(systemUser);
+            saveUsers();
+        }
+        
+        const savedUser = localStorage.getItem('shadowRootCurrentUser');
+        if (savedUser) {
+            currentUser = JSON.parse(savedUser);
+            checkBanStatus();
+            awardDailyLoginPoints();
+            showMainApp();
+        }
+    }
+    
+    // إعداد الأحداث
+    setupEventListeners();
+});
+
+// دالة لمزامنة تلقائية كل 30 ثانية
+setInterval(async () => {
+    if (currentUser && (await checkSupabaseConnection())) {
+        await syncDataToSupabase();
+    }
+}, 30000); 
+ 
+ // === الدوال المساعدة المفقودة ===
+
+// دالة تسجيل الدخول المحلي (نسخة احتياطية)
+function handleLoginLocal() {
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value.trim();
+    
+    if (!username || !password) {
+        alert('يرجى ملء جميع الحقول');
+        return;
+    }
+    
+    const user = users.find(u => u.username === username && !u.removed);
+    
+    if (!user) {
+        alert('اسم المستخدم غير صحيح');
+        return;
+    }
+
+    if (user.password !== password) {
+        alert('كلمة المرور غير صحيحة');
+        return;
+    }
+    
+    // التحقق من الحظر
+    if (user.banned && new Date(user.banUntil) > new Date()) {
+        const remainingTime = Math.ceil((new Date(user.banUntil) - new Date()) / (1000 * 60 * 60 * 24));
+        alert(`أنت محظور! متبقي ${remainingTime} أيام`);
+        return;
+    }
+    
+    user.banned = false;
+    user.banUntil = null;
+    user.status = "online";
+    
+    currentUser = user;
+    localStorage.setItem('shadowRootCurrentUser', JSON.stringify(currentUser));
+    saveUsers();
+    
+    // تسجيل الدخول في الأرشيف
+    addToArchive('user_login', `تسجيل دخول المستخدم ${username}`);
+    
+    showMainApp();
+}
+
+// دالة التسجيل المحلي (نسخة احتياطية)
+function handleRegisterLocal() {
+    const username = document.getElementById('registerUsername').value.trim();
+    const password = document.getElementById('registerPassword').value.trim();
+    const confirmPassword = document.getElementById('registerConfirmPassword').value.trim();
+    
+    if (!username || !password || !confirmPassword) {
+        alert('يرجى ملء جميع الحقول');
+        return;
+    }
+    
+    if (password !== confirmPassword) {
+        alert('كلمات المرور غير متطابقة');
+        return;
+    }
+    
+    if (reservedUsernames.includes(username)) {
+        alert('اسم المستخدم محجوز، يرجى اختيار اسم آخر');
+        return;
+    }
+    
+    if (users.find(u => u.username === username && !u.removed)) {
+        alert('اسم المستخدم موجود مسبقاً');
+        return;
+    }
+    
+    const newUser = {
+        id: generateUserId(),
+        username: username,
+        password: password,
+        rank: "d",
+        status: "online",
+        banned: false,
+        banUntil: null,
+        removed: false,
+        joinDate: new Date().toISOString()
+    };
+    
+    users.push(newUser);
+    saveUsers();
+
+    // إضافة نقاط بداية
+    userPoints[newUser.id] = 0;
+    saveUserPoints();
+    
+    // تسجيل إنشاء الحساب في الأرشيف
+    addToArchive('user_register', `إنشاء حساب جديد للمستخدم ${username}`);
+    
+    alert('تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول');
+    
+    // التبديل إلى تبويب تسجيل الدخول
+    document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.login-content').forEach(c => c.classList.remove('active'));
+    document.querySelector('.login-tab[data-tab="login"]').classList.add('active');
+    document.getElementById('loginContent').classList.add('active');
+    
+    // تفريغ الحقول
+    document.getElementById('registerUsername').value = '';
+    document.getElementById('registerPassword').value = '';
+    document.getElementById('registerConfirmPassword').value = '';
+}
+
+// === المتغيرات الأساسية ===
+let currentUser = null;
+let users = JSON.parse(localStorage.getItem('shadowRootUsers')) || [];
+let messages = JSON.parse(localStorage.getItem('shadowRootMessages')) || [];
+let privateMessages = JSON.parse(localStorage.getItem('shadowRootPrivateMessages')) || [];
+let privateUnread = JSON.parse(localStorage.getItem('shadowRootPrivateUnread')) || {};
+let userColors = JSON.parse(localStorage.getItem('shadowRootUserColors')) || {};
+let darkChatRooms = JSON.parse(localStorage.getItem('shadowRootDarkRooms')) || [];
+let projects = JSON.parse(localStorage.getItem('shadowRootProjects')) || [];
+let pendingPromotions = JSON.parse(localStorage.getItem('shadowRootPendingPromotions')) || [];
+let userPoints = JSON.parse(localStorage.getItem('shadowRootUserPoints')) || {};
+let dailyLogin = JSON.parse(localStorage.getItem('shadowRootDailyLogin')) || {};
+let systemArchive = JSON.parse(localStorage.getItem('shadowRootArchive')) || [];
+let currentDarkRoom = null;
+let secretMode = false;
+let selectedPrivateUser = null;
+let currentLanguage = 'ar';
+
+// الأسماء المحجوبة
+const reservedUsernames = ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09'];
+
+// صلاحيات الرتب
+const rankPermissions = {
+    'system': ['all', 'earth_control', 'view_archive', 'manage_points', 'view_closed_dark_chats'],
+    's': ['manage_users', 'view_reports', 'ban_users', 'delete_messages', 'promote_users', 'view_dark_chats', 'verify_projects'],
+    'a': ['manage_juniors', 'view_stats', 'create_rooms', 'join_rooms', 'submit_projects'],
+    'b': ['create_rooms', 'join_rooms', 'submit_projects'],
+    'c': ['join_rooms', 'submit_projects'],
+    'd': ['basic_chat', 'submit_projects']
+};
+
+// === دوال الحفظ الأساسية ===
+function saveUsers() {
+    localStorage.setItem('shadowRootUsers', JSON.stringify(users));
+}
+
+function saveMessages() {
+    localStorage.setItem('shadowRootMessages', JSON.stringify(messages));
+}
+
+function saveUserPoints() {
+    localStorage.setItem('shadowRootUserPoints', JSON.stringify(userPoints));
+}
+
+function addToArchive(type, description) {
+    const archiveItem = {
+        id: Date.now(),
+        type: type,
+        action: type,
+        description: description,
+        timestamp: new Date().toISOString(),
+        user: currentUser ? currentUser.username : 'system'
+    };
+    
+    systemArchive.push(archiveItem);
+    localStorage.setItem('shadowRootArchive', JSON.stringify(systemArchive));
+}
+
+// === دوال مساعدة أساسية ===
+function generateUserId() {
+    return Date.now().toString();
+}
+
+function checkBanStatus() {
+    if (currentUser && currentUser.banned && new Date(currentUser.banUntil) > new Date()) {
+        const remainingTime = Math.ceil((new Date(currentUser.banUntil) - new Date()) / (1000 * 60 * 60 * 24));
+        alert(`أنت محظور! متبقي ${remainingTime} أيام`);
+        handleLogout();
+        return false;
+    }
+    return true;
+}
+
+function hasPermission(permission) {
+    if (currentUser.rank === 'system') return true;
+    return rankPermissions[currentUser.rank]?.includes(permission) || false;
+}
+
+function getRankName(rank) {
+    const rankNames = {
+        'system': '👑 SYSTEM',
+        's': '⚡ S',
+        'a': '🔧 A',
+        'b': '💻 B',
+        'c': '👨‍💻 C',
+        'd': '🎓 D'
+    };
+    return rankNames[rank] || 'غير معروف';
+}
+
+function addUserPoints(userId, points) {
+    if (!userId) return;
+    userPoints[userId] = (userPoints[userId] || 0) + points;
+    saveUserPoints();
+}
+
+function awardDailyLoginPoints() {
+    const today = new Date().toDateString();
+    if (dailyLogin[currentUser.id] !== today) {
+        addUserPoints(currentUser.id, 3);
+        dailyLogin[currentUser.id] = today;
+        localStorage.setItem('shadowRootDailyLogin', JSON.stringify(dailyLogin));
+        addToArchive('daily_login', `الدخول اليومي للمستخدم ${currentUser.username} - +3 نقاط`);
+    }
+}
+
+// === دوال الواجهة الأساسية ===
+function showMainApp() {
+    if (!checkBanStatus()) return;
+    
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'flex';
+    
+    // تحديث معلومات المستخدم
+    document.getElementById('userName').textContent = currentUser.username;
+    document.getElementById('userRank').textContent = getRankName(currentUser.rank);
+    document.getElementById('userPoints').textContent = `النقاط: ${userPoints[currentUser.id] || 0}`;
+    document.getElementById('userAvatar').textContent = currentUser.username.charAt(0).toUpperCase();
+    document.getElementById('userAvatar').className = `user-avatar avatar-${currentUser.rank}`;
+    
+    // تحميل البيانات
+    loadMessages();
+    loadMembers();
+}
+
+function handleLogout() {
+    if (currentUser) {
+        addToArchive('user_logout', `تسجيل خروج المستخدم ${currentUser.username}`);
+        currentUser.status = "offline";
+        saveUsers();
+    }
+    
+    currentUser = null;
+    localStorage.removeItem('shadowRootCurrentUser');
+    
+    document.getElementById('mainApp').style.display = 'none';
+    document.getElementById('loginScreen').style.display = 'flex';
+    
+    document.getElementById('loginUsername').value = '';
+    document.getElementById('loginPassword').value = '';
+}
+
+// === دوال التحميل الأساسية ===
+function loadMessages() {
+    const chatMessages = document.getElementById('chatMessages');
+    chatMessages.innerHTML = '';
+    
+    messages.forEach(msg => {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${msg.banned ? 'banned' : ''} ${msg.userRank} ${msg.isBroadcast ? 'broadcast-message' : ''}`;
+        
+        const messageHeader = document.createElement('div');
+        messageHeader.className = 'message-header';
+        
+        const senderSpan = document.createElement('span');
+        senderSpan.className = `message-sender sender-${msg.userRank}`;
+        
+        let rankBadge = '';
+        if (msg.userRank === 'system') {
+            rankBadge = `👑 <span style="color: gold;">SYSTEM</span>`;
+        } else if (msg.userRank === 's') {
+            rankBadge = `⚡ <span style="color: var(--rank-s);">S</span>`;
+        } else if (msg.userRank === 'a') {
+            rankBadge = `🔧 <span style="color: var(--rank-a);">A</span>`;
+        } else if (msg.userRank === 'b') {
+            rankBadge = `💻 <span style="color: var(--rank-b);">B</span>`;
+        } else if (msg.userRank === 'c') {
+            rankBadge = `👨‍💻 <span style="color: var(--rank-c);">C</span>`;
+        } else {
+            rankBadge = `🎓 <span style="color: var(--rank-d);">D</span>`;
+        }
+        
+        if (msg.isBroadcast) {
+            senderSpan.innerHTML = `<div class="broadcast-header">📢 ${rankBadge}: ${msg.userName}</div>`;
+        } else {
+            senderSpan.innerHTML = `${rankBadge} ${msg.userName} <span style="color: var(--hacker-green); font-size: 10px;">(${msg.userPoints || 0} نقطة)</span>`;
+        }
+        
+        const timeSpan = document.createElement('span');
+        timeSpan.textContent = new Date(msg.timestamp).toLocaleTimeString();
+        
+        messageHeader.appendChild(senderSpan);
+        messageHeader.appendChild(timeSpan);
+        
+        const messageText = document.createElement('div');
+        if (msg.isBroadcast) {
+            messageText.innerHTML = msg.text;
+        } else {
+            messageText.textContent = msg.banned ? '[رسالة محذوفة]' : msg.text;
+        }
+        
+        messageDiv.appendChild(messageHeader);
+        messageDiv.appendChild(messageText);
+        
+        chatMessages.appendChild(messageDiv);
+    });
+    
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function loadMembers() {
+    const membersList = document.getElementById('membersList');
+    membersList.innerHTML = '';
+    
+    users.forEach(user => {
+        if (!user.removed) {
+            const userCard = document.createElement('div');
+            userCard.className = `user-card ${user.banned ? 'banned' : ''}`;
+            userCard.style.borderLeft = `4px solid var(--rank-${user.rank})`;
+            
+            const userInfo = document.createElement('div');
+            userInfo.innerHTML = `
+                <strong>${user.username}</strong> - ${getRankName(user.rank)}
+                <div style="font-size: 12px; color: #aaa;">
+                    ${user.status === 'online' ? '🟢 متصل' : '🔴 غير متصل'}
+                    ${user.banned ? ' | 🔴 محظور' : ''}
+                    <br>النقاط: ${userPoints[user.id] || 0}
+                </div>
+            `;
+            
+            userCard.appendChild(userInfo);
+            membersList.appendChild(userCard);
+        }
+    });
+}
+
+// الآن تابع باقي الكود الأصلي...
+ 
+// بيانات التطبيق الموسعة
         let currentUser = null;
         let users = JSON.parse(localStorage.getItem('shadowRootUsers')) || [];
         let messages = JSON.parse(localStorage.getItem('shadowRootMessages')) || [];
