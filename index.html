@@ -1875,15 +1875,32 @@
     </div>
 
     <script>
-// تكوين Supabase - ضع هذا في بداية السكربت
-const SUPABASE_URL = 'https://chrgmariswjgavidqjjt.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNocmdtYXJpc3dqZ2F2aWRxamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjExMjcwOTksImV4cCI6MjA3NjcwMzA5OX0.d8Z2jpfhkBLZeluZPBYItczDEDROA1oD36H1D2eWzU4';
+// Supabase client (optional). The app will fall back to localStorage if Supabase isn't configured.
+// NOTE: Do NOT commit real keys into this file. Put keys in an environment-managed file locally.
+const SUPABASE_URL = 'REPLACE_WITH_SUPABASE_URL';
+const SUPABASE_ANON_KEY = 'REPLACE_WITH_ANON_KEY';
 
-// إنشاء عميل Supabase
-const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Load Supabase from CDN if present (the <script> tag is expected in the page head or above this script).
+// Initialize client only when keys are replaced locally by the developer.
+let supabase = null;
+if (typeof window.supabase !== 'undefined' && SUPABASE_URL !== 'REPLACE_WITH_SUPABASE_URL' && SUPABASE_ANON_KEY !== 'REPLACE_WITH_ANON_KEY') {
+    try {
+        supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        console.log('Supabase client initialized');
+    } catch (e) {
+        console.warn('Supabase library found but initialization failed:', e);
+        supabase = null;
+    }
+} else {
+    console.warn('Supabase not configured - running in localStorage-only mode');
+}
 
 // دالة للتحقق من اتصال Supabase
 async function checkSupabaseConnection() {
+    if (!supabase) {
+        console.warn('Supabase client not initialized, skipping connection check');
+        return false;
+    }
     try {
         const { data, error } = await supabase.from('users').select('count').limit(1);
         if (error) throw error;
@@ -1898,7 +1915,10 @@ async function checkSupabaseConnection() {
 // دالة لمزامنة البيانات مع Supabase
 async function syncDataToSupabase() {
     if (!currentUser) return;
-    
+    if (!supabase) {
+        console.warn('Supabase not initialized - skipping syncDataToSupabase');
+        return;
+    }
     try {
         // مزامنة المستخدمين
         const { error: usersError } = await supabase
@@ -1922,6 +1942,10 @@ async function syncDataToSupabase() {
 
 // دالة لتحميل البيانات من Supabase
 async function loadDataFromSupabase() {
+    if (!supabase) {
+        console.warn('Supabase not initialized - skipping loadDataFromSupabase');
+        return;
+    }
     try {
         // تحميل المستخدمين
         const { data: usersData, error: usersError } = await supabase
@@ -1954,14 +1978,19 @@ async function loadDataFromSupabase() {
 
 // دالة لتسجيل الدخول مع Supabase
 async function handleLoginWithSupabase() {
+    // If supabase client is not initialized, fallback to local login
+    if (!supabase) {
+        return handleLoginLocal();
+    }
+
     const username = document.getElementById('loginUsername').value.trim();
     const password = document.getElementById('loginPassword').value.trim();
-    
+
     if (!username || !password) {
         alert('يرجى ملء جميع الحقول');
         return;
     }
-    
+
     try {
         // البحث عن المستخدم في Supabase
         const { data: userData, error } = await supabase
@@ -1970,13 +1999,11 @@ async function handleLoginWithSupabase() {
             .eq('username', username)
             .eq('password', password)
             .eq('removed', false)
-            .single();
-        
+            .maybeSingle();
+
         if (error) {
-            // إذا لم يوجد المستخدم في Supabase، جرب المحلي
-            console.log('🔍 البحث في البيانات المحلية...');
-            handleLoginLocal();
-            return;
+            console.log('🔍 خطأ في استعلام Supabase، العودة للنظام المحلي:', error);
+            return handleLoginLocal();
         }
 
         if (!userData) {
@@ -1990,7 +2017,7 @@ async function handleLoginWithSupabase() {
             alert(`أنت محظور! متبقي ${remainingTime} أيام`);
             return;
         }
-        
+
         // تحديث حالة المستخدم
         const { error: updateError } = await supabase
             .from('users')
@@ -2000,22 +2027,22 @@ async function handleLoginWithSupabase() {
                 banUntil: null 
             })
             .eq('id', userData.id);
-        
+
         if (updateError) console.error('خطأ في تحديث الحالة:', updateError);
 
         currentUser = userData;
         localStorage.setItem('shadowRootCurrentUser', JSON.stringify(currentUser));
-        
+
         // تحميل أحدث البيانات
         await loadDataFromSupabase();
-        
+
         // تسجيل الدخول في الأرشيف
         addToArchive('user_login', `تسجيل دخول المستخدم ${username}`);
-        
+
         showMainApp();
-        
+
     } catch (error) {
-        console.error('❌ خطأ في تسجيل الدخول:', error);
+        console.error('❌ خطأ في تسجيل الدخول Supabase:', error);
         // استخدام النظام المحلي كنسخة احتياطية
         handleLoginLocal();
     }
@@ -2023,6 +2050,9 @@ async function handleLoginWithSupabase() {
 
 // دالة لتسجيل مستخدم جديد في Supabase
 async function handleRegisterWithSupabase() {
+    // If supabase is not initialized, fallback to local register
+    if (!supabase) return handleRegisterLocal();
+
     const username = document.getElementById('registerUsername').value.trim();
     const password = document.getElementById('registerPassword').value.trim();
     const confirmPassword = document.getElementById('registerConfirmPassword').value.trim();
@@ -2049,7 +2079,7 @@ async function handleRegisterWithSupabase() {
             .select('id')
             .eq('username', username)
             .eq('removed', false)
-            .single();
+            .maybeSingle();
         
         if (existingUser) {
             alert('اسم المستخدم موجود مسبقاً');
@@ -2108,6 +2138,10 @@ async function handleRegisterWithSupabase() {
 // دالة محسنة لإرسال الرسائل مع Supabase
 async function sendMessageWithSupabase() {
     if (!checkBanStatus()) return;
+    if (!supabase) {
+        // fallback to local sendMessage
+        return sendMessage();
+    }
     
     const messageInput = document.getElementById('messageInput');
     const messageText = messageInput.value.trim();
@@ -2655,40 +2689,7 @@ function loadMembers() {
     });
 }
 
-// الآن تابع باقي الكود الأصلي...
- 
-// بيانات التطبيق الموسعة
-        let currentUser = null;
-        let users = JSON.parse(localStorage.getItem('shadowRootUsers')) || [];
-        let messages = JSON.parse(localStorage.getItem('shadowRootMessages')) || [];
-    let privateMessages = JSON.parse(localStorage.getItem('shadowRootPrivateMessages')) || [];
-    // privateUnread[fromId] = { toId: count }
-    let privateUnread = JSON.parse(localStorage.getItem('shadowRootPrivateUnread')) || {};
-    // per-user message colors
-    let userColors = JSON.parse(localStorage.getItem('shadowRootUserColors')) || {};
-        let darkChatRooms = JSON.parse(localStorage.getItem('shadowRootDarkRooms')) || [];
-        let projects = JSON.parse(localStorage.getItem('shadowRootProjects')) || [];
-    let pendingPromotions = JSON.parse(localStorage.getItem('shadowRootPendingPromotions')) || [];
-        let userPoints = JSON.parse(localStorage.getItem('shadowRootUserPoints')) || {};
-        let dailyLogin = JSON.parse(localStorage.getItem('shadowRootDailyLogin')) || {};
-        let systemArchive = JSON.parse(localStorage.getItem('shadowRootArchive')) || [];
-        let currentDarkRoom = null;
-        let secretMode = false;
-        let selectedPrivateUser = null;
-        let currentLanguage = 'ar';
-
-        // الأسماء المحجوبة
-        const reservedUsernames = ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09'];
-
-        // صلاحيات الرتب الجديدة الموسعة
-        const rankPermissions = {
-            'system': ['all', 'earth_control', 'view_archive', 'manage_points', 'view_closed_dark_chats'],
-            's': ['manage_users', 'view_reports', 'ban_users', 'delete_messages', 'promote_users', 'view_dark_chats', 'verify_projects'],
-            'a': ['manage_juniors', 'view_stats', 'create_rooms', 'join_rooms', 'submit_projects'],
-            'b': ['create_rooms', 'join_rooms', 'submit_projects'],
-            'c': ['join_rooms', 'submit_projects'],
-            'd': ['basic_chat', 'submit_projects']
-        };
+// الآن تابع باقي الكود الأصلي... (نسخة مكررة من متغيرات الحالة حُذفت هنا)
 
         // ترجمة النصوص الموسعة
         const translations = {
