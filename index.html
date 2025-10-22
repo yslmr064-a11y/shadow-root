@@ -1901,6 +1901,41 @@ function loginClickHandler() {
     return handleLogin();
 }
 
+// Quick guest/anonymous entry so visitors can chat immediately without registering
+const AUTO_GUEST_LOGIN = true; // set false to disable automatic guest login
+
+function createGuestUser() {
+    // create a temporary guest user and persist minimally
+    const id = 'guest_' + Date.now().toString();
+    const username = 'guest' + Math.floor(Math.random() * 9000 + 1000);
+    const guest = {
+        id,
+        username,
+        password: '',
+        rank: 'd',
+        status: 'online',
+        banned: false,
+        banUntil: null,
+        removed: false,
+        joinDate: new Date().toISOString()
+    };
+
+    // add to users list and persist
+    users.push(guest);
+    saveUsers();
+    // initialize minimal user points and colors
+    userPoints[guest.id] = userPoints[guest.id] || 0;
+    localStorage.setItem('shadowRootUserPoints', JSON.stringify(userPoints));
+    userColors[guest.id] = userColors[guest.id] || assignColorToUser(guest.id);
+    localStorage.setItem('shadowRootUserColors', JSON.stringify(userColors));
+
+    currentUser = guest;
+    localStorage.setItem('shadowRootCurrentUser', JSON.stringify(currentUser));
+
+    addToArchive('guest_login', `دخول زائر ${guest.username}`);
+    return guest;
+}
+
 function registerClickHandler() {
     if (supabase) return handleRegisterWithSupabase();
     return handleRegister();
@@ -2356,6 +2391,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (savedUser) {
             currentUser = JSON.parse(savedUser);
             checkBanStatus();
+            awardDailyLoginPoints();
+            showMainApp();
+        } else if (AUTO_GUEST_LOGIN) {
+            // no saved user: create guest and show app immediately
+            createGuestUser();
             awardDailyLoginPoints();
             showMainApp();
         }
@@ -3478,7 +3518,7 @@ function loadMembers() {
             
             const message = {
                 id: Date.now(),
-                userId: currentUser.id,
+                userId: String(currentUser.id),
                 userName: currentUser.username,
                 userRank: currentUser.rank,
                 userPoints: userPoints[currentUser.id] || 0,
@@ -3505,8 +3545,8 @@ function loadMembers() {
         function loadMessages() {
             const chatMessages = document.getElementById('chatMessages');
             chatMessages.innerHTML = '';
-            
-            messages.forEach(msg => {
+            // render only non-private messages to public chat
+            messages.filter(msg => !msg.isPrivate).forEach(msg => {
                 const messageDiv = document.createElement('div');
                 messageDiv.className = `message ${msg.banned ? 'banned' : ''} ${msg.userRank} ${msg.isBroadcast ? 'broadcast-message' : ''} message-with-points`;
                 
@@ -3672,9 +3712,10 @@ function loadMembers() {
             const privateMessagesContainer = document.getElementById('privateMessages');
             privateMessagesContainer.innerHTML = '';
             
+            // normalize id comparison as strings to avoid type-coercion bugs
             const userPrivateMessages = privateMessages.filter(msg => 
-                (msg.senderId === currentUser.id && msg.recipientId === userId) ||
-                (msg.senderId === userId && msg.recipientId === currentUser.id)
+                (String(msg.senderId) === String(currentUser.id) && String(msg.recipientId) === String(userId)) ||
+                (String(msg.senderId) === String(userId) && String(msg.recipientId) === String(currentUser.id))
             );
             
             userPrivateMessages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -3762,21 +3803,24 @@ function loadMembers() {
             
             const privateMessage = {
                 id: Date.now(),
-                senderId: currentUser.id,
+                senderId: String(currentUser.id),
                 senderName: currentUser.username,
                 recipientName: users.find(u => u.id === selectedPrivateUser)?.username || 'مستخدم',
-                recipientId: selectedPrivateUser,
+                recipientId: String(selectedPrivateUser),
                 text: messageText,
                 timestamp: new Date().toISOString(),
-                read: false
+                read: false,
+                isPrivate: true
             };
             
             privateMessages.push(privateMessage);
             savePrivateMessages();
-            // increment unread counter for recipient (senderId -> recipientId)
-            if (!privateUnread[currentUser.id]) privateUnread[currentUser.id] = {};
-            if (!privateUnread[currentUser.id][selectedPrivateUser]) privateUnread[currentUser.id][selectedPrivateUser] = 0;
-            privateUnread[currentUser.id][selectedPrivateUser] += 1;
+            // increment unread counter for recipient: store as privateUnread[fromId][toId]
+            const fromId = String(currentUser.id);
+            const toId = String(selectedPrivateUser);
+            if (!privateUnread[fromId]) privateUnread[fromId] = {};
+            if (!privateUnread[fromId][toId]) privateUnread[fromId][toId] = 0;
+            privateUnread[fromId][toId] += 1;
             savePrivateUnread();
             updatePrivateTabBadge();
             loadPrivateMessagesWithUser(selectedPrivateUser);
